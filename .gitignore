@@ -1,0 +1,15 @@
+# virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# python byte-code / caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# environment variables / secrets
+.env
+
