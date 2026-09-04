@@ -32,7 +32,13 @@ def parse_dns(message):
     "Additional": additional_section,
   }
 
-def resolver(mensaje_consulta:bytes, ip_addr=root_ip) -> bytes:
+def resolver(mensaje_consulta:bytes, ip_addr=root_ip, name_server='.') -> bytes:
+
+  #implementando debug
+  parsed_consulta = parse_dns(mensaje_consulta)
+  qname = str(parsed_consulta["Qname"])
+  print(f"(debug) Consultando '{qname}' a '{name_server}' con dirección IP '{ip_addr}'")
+
   # creamos una variable temp para no interferir con el socket principal
   socket_temp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
   socket_temp.sendto(mensaje_consulta, (ip_addr, 53))
@@ -53,23 +59,23 @@ def resolver(mensaje_consulta:bytes, ip_addr=root_ip) -> bytes:
   # si venian ese tipo de respuesta, envíamos la query inicial
   # a la dirección ip contenida en Additional
   if ns_records:
+    new_domain = str(ns_records[0].rdata)
     for rr in parsed["Additional"]:
       if rr.rtype == dnslib.QTYPE.A:
         nueva_ip = str(rr.rdata)
-        return resolver(mensaje_consulta, nueva_ip)
+        return resolver(mensaje_consulta, nueva_ip, new_domain)
 
     # si no hay nueva ip, tomamos el nombre de un NameServer
     # y llamamos recursivamente a la función para resolver la IP
-    new_domain = str(ns_records[0].rdata)
     new_query = dnslib.DNSRecord.question(new_domain, qtype="A").pack()
-    new_response = resolver(new_query, root_ip)
+    new_response = resolver(new_query, root_ip, '.')
 
     if new_response:
       parsed = parse_dns(new_response)
       for rr in parsed["Answer"]:
         if rr.rtype == dnslib.QTYPE.A:
           new_ip = str(rr.rdata)
-          return resolver(mensaje_consulta, new_ip)
+          return resolver(mensaje_consulta, new_ip, new_domain)
 
 if __name__ == "__main__":
   # setup inicial del proxy
@@ -99,4 +105,6 @@ if __name__ == "__main__":
     """
 
     dns_response = resolver(message)
-    dgram_socket.sendto(dns_response, address)
+    # ejecutar solo si existe respuesta por si la función retorna None
+    if dns_response:
+      dgram_socket.sendto(dns_response, address)
