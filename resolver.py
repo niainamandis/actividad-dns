@@ -1,8 +1,23 @@
 import socket
 import dnslib 
 
-buff_size = 8129 
+buff_size = 8192 
 root_ip = "198.41.0.4"
+
+# estructuras para caché
+historial = [] # últimas 20 consultas
+ip_database = {} # {dominio: ip}
+mensajes = {}
+
+def top3():
+  conteo = {}
+  ans = []
+  for dom in historial:
+    conteo[dom] = conteo.get(dom,0) + 1
+  ranking = sorted(conteo.items(), key=lambda x: x[1], reverse=True)
+  for item in ranking[:3]:
+    ans.append(item[0])
+  return ans
 
 def parse_dns(message):
   # parseamos primero con dnslib
@@ -33,7 +48,6 @@ def parse_dns(message):
   }
 
 def resolver(mensaje_consulta:bytes, ip_addr=root_ip, name_server='.') -> bytes:
-
   #implementando debug
   parsed_consulta = parse_dns(mensaje_consulta)
   qname = str(parsed_consulta["Qname"])
@@ -77,6 +91,8 @@ def resolver(mensaje_consulta:bytes, ip_addr=root_ip, name_server='.') -> bytes:
           new_ip = str(rr.rdata)
           return resolver(mensaje_consulta, new_ip, new_domain)
 
+    socket_temp.close()
+
 if __name__ == "__main__":
   # setup inicial del proxy
   IP_VM = "10.0.2.15" # amandis 192.168.64.2
@@ -95,7 +111,24 @@ if __name__ == "__main__":
   while True:
     # recibimos el mensaje junto con su origen 
     message, address = dgram_socket.recvfrom(buff_size)
+    parsed_temp = parse_dns(message)
+    qname = str(parsed_temp["Qname"])
 
+    # verificamos un historial de 20 consultas
+    historial.append(qname)
+    if len(historial)>20:
+      historial.pop(0)
+
+    # revisamos si el dominio consultado está en el caché
+    top = top3()
+    if qname in top and qname in mensajes:
+      print(f"(debug) Consultando '{qname}' a 'caché' con dirección IP '{ip_database.get(qname, 'desconocida')}'")
+      cached = mensajes[qname]
+      # necesitamos utilizar el ID del cliente pero el mensaje guardado
+      mensaje_act = message[:2] + cached[2:]
+      dgram_socket.sendto(mensaje_act, address)
+      continue
+    
     """
     # parseamos el mensaje
     parsed_req = parse_dns(message)
@@ -107,4 +140,11 @@ if __name__ == "__main__":
     dns_response = resolver(message)
     # ejecutar solo si existe respuesta por si la función retorna None
     if dns_response:
+      # guardamos la ip en nuestro diccionario de ips
+      ans_parsed = parse_dns(dns_response)
+      for rr in ans_parsed["Answer"]:
+        if rr.rtype == dnslib.QTYPE.A:
+          ip_database[qname] = str(rr.rdata)
+          break;
+      mensajes[qname] = dns_response
       dgram_socket.sendto(dns_response, address)
